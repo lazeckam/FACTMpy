@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: FACTMpy
+Version: 0.1
+Summary: FACTM package
+Author: Małgorzata Łazęcka
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: scikit-learn
+Dynamic: author
+Dynamic: classifier
+Dynamic: description-content-type
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
