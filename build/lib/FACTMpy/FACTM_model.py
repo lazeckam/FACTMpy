@@ -10,7 +10,8 @@ class FACTM():
     """
     Class to define Factor Analysis with Correlated Topic Model.
     """
-    def __init__(self, data, N, M, K, D, G, likelihoods, Z_priors, W_priors, starting_params_fa=None, starting_params_ctm=None, *args, **kwargs):
+    def __init__(self, data, N, M, K, D, G, likelihoods, Z_priors, W_priors, 
+                 starting_params_fa=None, starting_params_ctm=None, *args, **kwargs):
 
         self.likelihoods = likelihoods
         self.Z_priors = Z_priors

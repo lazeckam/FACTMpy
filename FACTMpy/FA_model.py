@@ -61,13 +61,13 @@ class nodeFA_z(nodeFA_general):
     def update_k(self, k):
 
         vi_mu_new = np.zeros(self.N)
-        vi_var_new = np.zeros(1)
+        vi_var_new = np.zeros(self.N)
 
         for m in range(self.M):
             if self.likelihoods[m] in ['normal', 'Bernoulli']:
 
                 # VI var
-                vi_var_new += np.dot(self.tau_node[m].E_tau, self.w_node[m].E_w_squared[:,k])
+                vi_var_new += np.ma.dot(self.tau_node[m].E_tau, self.w_node[m].E_w_squared[:,k])
 
                 # VI mu
                 resid = self.y_node[m].data - np.dot(self.w_node[m].E_w, self.E_z.T).T
@@ -102,7 +102,7 @@ class nodeFA_z(nodeFA_general):
         # VI var:
         # prior variance of Z equals 1
         vi_var_new = 1/(vi_var_new + 1)
-        vi_var_new = vi_var_new*np.ones(self.N)
+        #vi_var_new = vi_var_new*np.ones(self.N)
 
         # VI mu
         vi_mu_new = vi_mu_new * vi_var_new
@@ -157,9 +157,9 @@ class nodeFA_hat_w_m(nodeFA_general):
     def MB(self):
         pass
 
-    def update_k(self, k, nominator, denominator, E_tau):
-        self.vi_mu[:,k] = nominator/(denominator)
-        self.vi_var[:,k] = 1/(E_tau*denominator)
+    def update_k(self, k, nominator, denominator):
+        self.vi_mu[:,k] = nominator/denominator
+        self.vi_var[:,k] = 1/denominator
 
 
 class nodeFA_s_m(nodeFA_general):
@@ -177,10 +177,10 @@ class nodeFA_s_m(nodeFA_general):
     def MB(self):
         pass
 
-    def update_k(self, k, nominator, denominator, E_tau, E_alpha_div_E_Tau, E_log_LR_theta):
+    def update_k(self, k, nominator, denominator, E_alpha, E_log_LR_theta):
 
-        lambda_k = E_log_LR_theta + log_eps(E_alpha_div_E_Tau)/2 - log_eps(denominator)/2 \
-              + (E_tau*nominator**2)/(2*denominator)
+        lambda_k = E_log_LR_theta + log_eps(E_alpha)/2 + log_eps(denominator)/2 \
+              + (nominator**2)/(2*denominator)
         
         # max value for lambda -> if it is reached, then P(S=1) = 1
         # if np.any(lambda_k > -np.log(EPS)):
@@ -261,9 +261,9 @@ class nodeFA_w_m(nodeFA_general):
                 # sum_j!=k <z_nk><z_nj><w_jd>
                 nominator_second_term = np.dot(self.E_w, self.z_node.E_z.T) - np.outer(self.E_w[:,k], self.z_node.E_z[:,k])
                 nominator_resid = self.y_m_node.data - nominator_second_term.T
-                nominator = self.tau_m_node.E_tau*(np.ma.dot(self.z_node.E_z[:,k], nominator_resid))
+                nominator = (np.ma.dot(self.z_node.E_z[:,k], self.tau_m_node.E_tau*nominator_resid))
 
-                denominator = np.sum(self.z_node.E_z_squared[:,k])* self.tau_m_node.E_tau + 1
+                denominator = np.ma.dot(self.z_node.E_z_squared[:,k], self.tau_m_node.E_tau) + 1
 
                 self.w_m_node_not_sparse.update_k(k, nominator, denominator)
                 self.update_params()
@@ -272,21 +272,17 @@ class nodeFA_w_m(nodeFA_general):
             if self.W_priors[self.m] == 'ARD' or self.W_priors[self.m] == 'ARD_SS':
 
                 # sum_j!=k <z_nk><z_nj><w_jd>
-                nominator_second_term_tmp = np.dot(self.E_w, np.dot(self.z_node.E_z.T, self.z_node.E_z[:,k]))
-                nominator_second_term = nominator_second_term_tmp - self.E_w[:,k]*np.sum(self.z_node.E_z[:,k]**2) 
+                nominator_second_term_tmp = np.dot(self.E_w, self.z_node.E_z.T*self.z_node.E_z[:,k]).T
+                nominator_second_term = nominator_second_term_tmp - np.outer(self.z_node.E_z[:,k]**2, self.E_w[:,k])
+                nominator = np.ma.sum(self.tau_m_node.E_tau*((self.y_m_node.data.T*self.z_node.E_z[:,k]).T - nominator_second_term), axis=0)
 
-                nominator = np.ma.dot(self.z_node.E_z[:,k], self.y_m_node.data) - nominator_second_term
+                denominator = np.ma.dot(self.z_node.E_z_squared[:,k], self.tau_m_node.E_tau) + self.alpha_m_node.E_alpha[k]
 
-                E_tau = self.tau_m_node.E_tau + 0.0
-                E_alpha_div_E_Tau = self.alpha_m_node.E_alpha[k]/E_tau
-
-                denominator = np.sum(self.z_node.E_z_squared[:,k]) + E_alpha_div_E_Tau
-
-                self.hat_w_m_node.update_k(k, nominator, denominator, E_tau)
+                self.hat_w_m_node.update_k(k, nominator, denominator)
 
                 if self.W_priors[self.m] == 'ARD_SS': # TBD: check
                     E_log_LR_theta = self.theta_m_node.E_log_LR[k] + 0.0
-                    self.s_m_node.update_k(k, nominator, denominator, E_tau, E_alpha_div_E_Tau, E_log_LR_theta)
+                    self.s_m_node.update_k(k, nominator, denominator, self.alpha_m_node.E_alpha[k], E_log_LR_theta)
 
                 self.update_params()
                 self.update_params_z()
@@ -496,12 +492,6 @@ class nodeFA_tau_m(nodeFA_general):
             self.a0 = a0
             self.b0 = b0
 
-            # same as in alpha
-            self.vi_a = a0 + self.N*np.ones(self.D[self.m])/2
-            self.vi_b = self.vi_a + 0.0
-
-            self.update_all_params()
-
             self.E_resid_squared_half = 0
 
             self.elbo = 0
@@ -514,9 +504,16 @@ class nodeFA_tau_m(nodeFA_general):
         self.y_m_node = y_m_node
         self.z_node = z_node
 
+        # we need MB for this, so it is here and not in init
+        self.vi_a = self.a0 + (self.N - np.sum(self.y_m_node.data.mask, axis=0))/2
+        self.vi_b = self.vi_a + 0.0
+        self.update_all_params()
+        self.update_params()
+        
+
     def update(self):
         self.update_params_w_z()
-        self.vi_b = self.b0 + self.E_resid_squared_half
+        self.vi_b = self.b0 + np.ma.sum(self.E_resid_squared_half, axis=0)
 
         self.update_params()
     
@@ -525,29 +522,31 @@ class nodeFA_tau_m(nodeFA_general):
         self.log_gamma_vi_a = gammaln(self.vi_a)
         self.digamma_vi_a = digamma(self.vi_a)
 
-        self.update_params()
+        # self.update_params()
 
         self.kl_const = -self.D[self.m]*(self.log_gamma_a0) + self.D[self.m]*(self.a0*log_eps(self.b0))
         self.entropy_cons = np.sum(self.vi_a) + np.sum(self.log_gamma_vi_a) + np.sum((1 - self.vi_a)*self.digamma_vi_a)
     
     def update_params(self):
-        
-        self.E_tau = self.vi_a/self.vi_b
 
-        self.E_log_tau = -log_eps(self.vi_b) + self.digamma_vi_a
+        self.E_tau_1D = self.vi_a/self.vi_b
+        self.E_tau = np.ma.array(np.outer(np.ones(self.N), self.E_tau_1D), mask=self.y_m_node.data.mask)
+
+        self.E_log_tau_1D = -log_eps(self.vi_b) + self.digamma_vi_a
+        self.E_log_tau = np.ma.array(np.outer(np.ones(self.N), self.E_log_tau_1D), mask=self.y_m_node.data.mask)
 
     def update_params_w_z(self):
         # d x n, sum over n
 
         # <(y_nd - \sum_k z_nk w_kd)**2>/2
-        third_term_of_tau = np.ma.sum(np.ma.array(self.w_m_node.E_w_z_squared, mask=self.y_m_node.data.mask), axis=0)/2
-        first_term_of_tau = np.ma.sum(self.y_m_node.data**2, axis=0)/2
-        second_term_of_tau = - np.ma.sum(self.y_m_node.data*self.w_m_node.E_w_z, axis=0)
+        third_term_of_tau = np.ma.array(self.w_m_node.E_w_z_squared, mask=self.y_m_node.data.mask)/2
+        first_term_of_tau = self.y_m_node.data**2/2
+        second_term_of_tau = - self.y_m_node.data*self.w_m_node.E_w_z
 
         self.E_resid_squared_half = first_term_of_tau + second_term_of_tau + third_term_of_tau
     
     def ELBO(self):
-        kl = self.kl_const + (self.a0 - 1)*np.sum(self.E_log_tau) - self.b0*np.sum(self.E_tau)
+        kl = self.kl_const + (self.a0 - 1)*np.sum(self.E_log_tau_1D) - self.b0*np.sum(self.E_tau_1D)
         entropy = self.entropy_cons - np.sum(log_eps(self.vi_b))
         self.elbo = kl + entropy
 
@@ -571,8 +570,8 @@ class nodeFA_y_m(nodeFA_general):
         self.tau_m_node = tau_m_node
 
     def ELBO(self):
-        elbo = -self.N*self.D[self.m]*log_eps(2*np.pi)/2 + self.N*np.sum(self.tau_m_node.E_log_tau)/2 \
-             - np.sum(self.tau_m_node.E_tau*self.tau_m_node.E_resid_squared_half)
+        elbo = -(self.N*self.D[self.m] - np.sum(self.data.mask))*log_eps(2*np.pi)/2 + np.sum(self.tau_m_node.E_log_tau)/2 \
+             - np.ma.sum(self.tau_m_node.E_tau*self.tau_m_node.E_resid_squared_half)
         self.elbo = elbo
 
 
@@ -721,7 +720,7 @@ class FA():
             node_w_m = nodeFA_w_m(m, general_params=general_params)
             self.nodelist_w.append(node_w_m)
 
-            node_tau_m = nodeFA_tau_m(1e-14, 1e-14, m, general_params=general_params)
+            node_tau_m = nodeFA_tau_m(0.001, 0.001, m, general_params=general_params)
             self.nodelist_tau.append(node_tau_m)
 
         self.elbo = 0
